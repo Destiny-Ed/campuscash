@@ -1,5 +1,5 @@
 name: campuscash_backend
-description: CampusCash Dart Shelf backend - owns all APIs including auth
+description: CampusCash Dart Shelf backend - owns all APIs including auth, real PostgreSQL + Paystack
 version: 1.0.0
 publish_to: none
 
@@ -17,7 +17,9 @@ dependencies:
   http: ^1.2.2
   collection: ^1.19.0
   intl: ^0.19.0
-  # Add firebase_admin or REST clients as needed for Storage & verification
+  postgres: ^3.4.0
+  dart_jsonwebtoken: ^2.14.1
+  bcrypt: ^1.1.3
 
 dev_dependencies:
   lints: ^5.0.0
