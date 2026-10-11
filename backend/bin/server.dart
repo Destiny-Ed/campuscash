@@ -5,6 +5,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:shelf_cors_headers/shelf_cors_headers.dart';
 import 'package:dotenv/dotenv.dart';
 
+import '../lib/db/database.dart';
 import '../lib/routes/auth_routes.dart';
 import '../lib/routes/map_routes.dart';
 import '../lib/routes/gig_routes.dart';
@@ -18,12 +19,18 @@ void main(List<String> args) async {
   final env = DotEnv(includePlatformEnvironment: true)..load();
   final port = int.tryParse(env['PORT'] ?? '8080') ?? 8080;
 
+  // Initialize real database
+  print('Connecting to PostgreSQL...');
+  await Database.migrate();
+  print('Database ready.');
+
   final router = Router();
 
-  // Public routes
+  // Public
   router.mount('/api/auth/', AuthRoutes().router);
+  router.get('/health', (Request request) => Response.ok('CampusCash API is healthy'));
 
-  // Protected routes
+  // Protected
   final authed = Pipeline()
       .addMiddleware(authMiddleware())
       .addHandler((Request request) {
@@ -38,10 +45,6 @@ void main(List<String> args) async {
   });
 
   router.mount('/', authed);
-
-  router.get('/health', (Request request) {
-    return Response.ok('CampusCash API is healthy');
-  });
 
   final handler = Pipeline()
       .addMiddleware(logRequests())

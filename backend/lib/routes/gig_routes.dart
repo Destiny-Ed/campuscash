@@ -1,85 +1,137 @@
 import 'dart:convert';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
-import '../models/gig.dart';
+import '../db/database.dart';
 
 class GigRoutes {
-  static final List<Map<String, dynamic>> _gigs = [];
-
   Router get router {
     final r = Router();
 
-    // List gigs (filter by type, university, course)
-    r.get('/', (Request request) {
+    r.get('/', (Request request) async {
       final type = request.url.queryParameters['type'];
       final universityId = request.url.queryParameters['universityId'];
+      final conn = await Database.connection;
 
-      var filtered = _gigs;
+      var query = '''
+        SELECT id, title, description, type, budget, currency, posted_by,
+               course_code, university_id, status, deadline, tags,
+               word_count, academic_level, created_at
+        FROM gigs WHERE status = 'open'
+      ''';
+      final params = <String, dynamic>{};
+
       if (type != null) {
-        filtered = filtered.where((g) => g['type'] == type).toList();
+        query += ' AND type = @type';
+        params['type'] = type;
       }
       if (universityId != null) {
-        filtered = filtered.where((g) => g['universityId'] == universityId).toList();
+        query += ' AND university_id = @uni';
+        params['uni'] = universityId;
       }
 
-      return Response.ok(jsonEncode(filtered),
+      query += ' ORDER BY created_at DESC LIMIT 50';
+
+      final result = await conn.execute(Sql.named(query), parameters: params);
+
+      final gigs = result.map((row) {
+        final m = row.toColumnMap();
+        return {
+          'id': m['id'],
+          'title': m['title'],
+          'description': m['description'],
+          'type': m['type'],
+          'budget': m['budget'],
+          'currency': m['currency'],
+          'postedBy': m['posted_by'],
+          'courseCode': m['course_code'],
+          'universityId': m['university_id'],
+          'status': m['status'],
+          'deadline': m['deadline']?.toString(),
+          'tags': m['tags'] ?? [],
+          'wordCount': m['word_count'],
+          'academicLevel': m['academic_level'],
+          'createdAt': m['created_at']?.toString(),
+        };
+      }).toList();
+
+      return Response.ok(jsonEncode(gigs),
           headers: {'Content-Type': 'application/json'});
     });
 
-    // Create gig (including projectWriting)
     r.post('/', (Request request) async {
       final userId = request.context['userId'] as String;
       final body = jsonDecode(await request.readAsString());
+      final conn = await Database.connection;
+      final id = const Uuid().v4();
 
-      final typeStr = body['type'] as String? ?? 'campusGig';
-      final gig = {
-        'id': const Uuid().v4(),
-        'title': body['title'],
-        'description': body['description'],
-        'type': typeStr, // microTask | tutoring | notes | campusGig | projectWriting | skillGig
-        'budget': body['budget'],
-        'currency': body['currency'] ?? 'USD',
-        'postedBy': userId,
-        'courseCode': body['courseCode'],
-        'universityId': body['universityId'],
-        'status': 'open',
-        'deadline': body['deadline'],
-        'tags': body['tags'] ?? [],
-        'createdAt': DateTime.now().toUtc().toIso8601String(),
-      };
+      await conn.execute(
+        Sql.named('''
+          INSERT INTO gigs (id, title, description, type, budget, currency, posted_by,
+                            course_code, university_id, deadline, tags, word_count, academic_level)
+          VALUES (@id, @title, @desc, @type, @budget, @currency, @userId,
+                  @course, @uni, @deadline, @tags, @words, @level)
+        '''),
+        parameters: {
+          'id': id,
+          'title': body['title'],
+          'desc': body['description'],
+          'type': body['type'] ?? 'campusGig',
+          'budget': body['budget'],
+          'currency': body['currency'] ?? 'NGN',
+          'userId': userId,
+          'course': body['courseCode'],
+          'uni': body['universityId'],
+          'deadline': body['deadline'],
+          'tags': body['tags'] ?? [],
+          'words': body['wordCount'],
+          'level': body['academicLevel'],
+        },
+      );
 
-      _gigs.add(gig);
-      return Response.ok(jsonEncode(gig),
+      return Response.ok(jsonEncode({'id': id, ...body}),
           headers: {'Content-Type': 'application/json'});
     });
 
-    // Project Writing specific endpoint (convenience)
+    // Dedicated Project Writing endpoint
     r.post('/project-writing', (Request request) async {
       final userId = request.context['userId'] as String;
       final body = jsonDecode(await request.readAsString());
+      final conn = await Database.connection;
+      final id = const Uuid().v4();
 
-      final gig = {
-        'id': const Uuid().v4(),
-        'title': body['title'] ?? 'Project Writing Request',
-        'description': body['description'],
-        'type': 'projectWriting',
-        'budget': body['budget'],
-        'currency': body['currency'] ?? 'USD',
-        'postedBy': userId,
-        'courseCode': body['courseCode'],
-        'universityId': body['universityId'],
-        'status': 'open',
-        'deadline': body['deadline'],
-        'tags': ['project-writing', 'essay', 'report', ...(body['tags'] ?? [])],
-        'wordCount': body['wordCount'],
-        'academicLevel': body['academicLevel'], // undergrad, masters, etc.
-        'createdAt': DateTime.now().toUtc().toIso8601String(),
-      };
+      await conn.execute(
+        Sql.named('''
+          INSERT INTO gigs (id, title, description, type, budget, currency, posted_by,
+                            course_code, university_id, deadline, tags, word_count, academic_level)
+          VALUES (@id, @title, @desc, 'projectWriting', @budget, @currency, @userId,
+                  @course, @uni, @deadline, @tags, @words, @level)
+        '''),
+        parameters: {
+          'id': id,
+          'title': body['title'] ?? 'Project Writing Request',
+          'desc': body['description'],
+          'budget': body['budget'],
+          'currency': body['currency'] ?? 'NGN',
+          'userId': userId,
+          'course': body['courseCode'],
+          'uni': body['universityId'],
+          'deadline': body['deadline'],
+          'tags': ['project-writing', 'essay', 'report', ...(body['tags'] as List? ?? [])],
+          'words': body['wordCount'],
+          'level': body['academicLevel'],
+        },
+      );
 
-      _gigs.add(gig);
-      return Response.ok(jsonEncode(gig),
-          headers: {'Content-Type': 'application/json'});
+      return Response.ok(
+        jsonEncode({
+          'id': id,
+          'type': 'projectWriting',
+          ...body,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
     });
 
     return r;
