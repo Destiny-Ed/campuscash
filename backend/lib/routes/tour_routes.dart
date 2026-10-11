@@ -1,16 +1,43 @@
 import 'dart:convert';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
+import '../db/database.dart';
 
 class TourRoutes {
-  static final List<Map<String, dynamic>> _tours = [];
-
   Router get router {
     final r = Router();
 
-    r.get('/<universityId>', (Request request, String universityId) {
-      final tours = _tours.where((t) => t['universityId'] == universityId).toList();
+    r.get('/<universityId>', (Request request, String universityId) async {
+      final conn = await Database.connection;
+
+      final result = await conn.execute(
+        Sql.named('''
+          SELECT id, title, description, pin_ids, estimated_minutes,
+                 is_official, cover_image, university_id, created_by, created_at
+          FROM tours WHERE university_id = @uni
+          ORDER BY is_official DESC, created_at DESC
+        '''),
+        parameters: {'uni': universityId},
+      );
+
+      final tours = result.map((row) {
+        final m = row.toColumnMap();
+        return {
+          'id': m['id'],
+          'title': m['title'],
+          'description': m['description'],
+          'pinIds': m['pin_ids'] ?? [],
+          'estimatedMinutes': m['estimated_minutes'],
+          'isOfficial': m['is_official'],
+          'coverImage': m['cover_image'],
+          'universityId': m['university_id'],
+          'createdBy': m['created_by'],
+          'createdAt': m['created_at']?.toString(),
+        };
+      }).toList();
+
       return Response.ok(jsonEncode(tours),
           headers: {'Content-Type': 'application/json'});
     });
@@ -18,22 +45,29 @@ class TourRoutes {
     r.post('/', (Request request) async {
       final userId = request.context['userId'] as String;
       final body = jsonDecode(await request.readAsString());
+      final conn = await Database.connection;
+      final id = const Uuid().v4();
 
-      final tour = {
-        'id': const Uuid().v4(),
-        'title': body['title'],
-        'description': body['description'],
-        'pinIds': body['pinIds'] ?? [],
-        'estimatedMinutes': body['estimatedMinutes'] ?? 30,
-        'isOfficial': body['isOfficial'] ?? false,
-        'coverImage': body['coverImage'],
-        'universityId': body['universityId'],
-        'createdBy': userId,
-        'createdAt': DateTime.now().toUtc().toIso8601String(),
-      };
+      await conn.execute(
+        Sql.named('''
+          INSERT INTO tours (id, title, description, pin_ids, estimated_minutes,
+                             is_official, cover_image, university_id, created_by)
+          VALUES (@id, @title, @desc, @pins, @mins, @official, @cover, @uni, @userId)
+        '''),
+        parameters: {
+          'id': id,
+          'title': body['title'],
+          'desc': body['description'],
+          'pins': body['pinIds'] ?? [],
+          'mins': body['estimatedMinutes'] ?? 30,
+          'official': body['isOfficial'] ?? false,
+          'cover': body['coverImage'],
+          'uni': body['universityId'],
+          'userId': userId,
+        },
+      );
 
-      _tours.add(tour);
-      return Response.ok(jsonEncode(tour),
+      return Response.ok(jsonEncode({'id': id, ...body}),
           headers: {'Content-Type': 'application/json'});
     });
 
